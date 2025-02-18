@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.5.0
+
+### Minor Changes
+
+-   a20a244: tooltip for each mode can be shown no matter what the current mode is
+-   cb02277: Add support for rendering mermaid graphs in the chat.
+
+### Patch Changes
+
+-   cc166f4: Improve Requesty provider integration
+
+    -   Adding Cline headers to API requests, to enable targeted optimizations
+    -   Read o3 reasoning effort from Cline config, not model name
+    -   Show token information in task header
+    -   Get total cost from response when available
+
+-   19e5edb: Update README.md to include Getting Started
+-   b7519a3: Add MCP Marketplace
+
 ## [3.4.0]
 
 -   Use more visual checkpoints indicators after editing files & running commands
