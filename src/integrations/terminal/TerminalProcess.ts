@@ -1,6 +1,8 @@
 import { EventEmitter } from "events"
 import stripAnsi from "strip-ansi"
 import * as vscode from "vscode"
+import { OutputProcessor, DEFAULT_CONFIG } from "./output-processing/OutputProcessor"
+import "./types"
 
 export interface TerminalProcessEvents {
 	line: [line: string]
@@ -22,6 +24,12 @@ export class TerminalProcess extends EventEmitter<TerminalProcessEvents> {
 	private lastRetrievedIndex: number = 0
 	isHot: boolean = false
 	private hotTimer: NodeJS.Timeout | null = null
+	private outputProcessor: OutputProcessor
+
+	constructor() {
+		super()
+		this.outputProcessor = new OutputProcessor()
+	}
 
 	// constructor() {
 	// 	super()
@@ -188,11 +196,17 @@ export class TerminalProcess extends EventEmitter<TerminalProcessEvents> {
 		let lineEndIndex: number
 		while ((lineEndIndex = this.buffer.indexOf("\n")) !== -1) {
 			let line = this.buffer.slice(0, lineEndIndex).trimEnd() // removes trailing \r
-			// Remove \r if present (for Windows-style line endings)
-			// if (line.endsWith("\r")) {
-			// 	line = line.slice(0, -1)
-			// }
-			this.emit("line", line)
+
+			// Process the line through OutputProcessor
+			const result = this.outputProcessor.processLine(line)
+
+			if (!result.skip) {
+				if (result.truncated) {
+					this.emit("line", "[...output truncated...]")
+				}
+				this.emit("line", result.line!)
+			}
+
 			this.buffer = this.buffer.slice(lineEndIndex + 1)
 		}
 	}
@@ -201,7 +215,13 @@ export class TerminalProcess extends EventEmitter<TerminalProcessEvents> {
 		if (this.buffer && this.isListening) {
 			const remainingBuffer = this.removeLastLineArtifacts(this.buffer)
 			if (remainingBuffer) {
-				this.emit("line", remainingBuffer)
+				const result = this.outputProcessor.processLine(remainingBuffer)
+				if (!result.skip) {
+					if (result.truncated) {
+						this.emit("line", "[...output truncated...]")
+					}
+					this.emit("line", result.line!)
+				}
 			}
 			this.buffer = ""
 			this.lastRetrievedIndex = this.fullOutput.length
@@ -212,6 +232,7 @@ export class TerminalProcess extends EventEmitter<TerminalProcessEvents> {
 		this.emitRemainingBufferIfListening()
 		this.isListening = false
 		this.removeAllListeners("line")
+		this.outputProcessor.clear() // Clear processor state
 		this.emit("continue")
 	}
 
