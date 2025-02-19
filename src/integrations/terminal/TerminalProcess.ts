@@ -2,7 +2,6 @@ import { EventEmitter } from "events"
 import stripAnsi from "strip-ansi"
 import * as vscode from "vscode"
 import { OutputProcessor, DEFAULT_CONFIG } from "./output-processing/OutputProcessor"
-import "./types"
 
 export interface TerminalProcessEvents {
 	line: [line: string]

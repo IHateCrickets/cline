@@ -3,31 +3,7 @@ import { describe, it } from "mocha"
 import { TerminalProcess } from "./TerminalProcess"
 import { EventEmitter } from "events"
 import * as vscode from "vscode"
-
-// Mock VSCode Terminal
-class MockTerminal implements Partial<vscode.Terminal> {
-	private commandOutput: string[]
-	shellIntegration?: {
-		executeCommand?: (command: string) => {
-			read: () => AsyncIterable<string>
-		}
-	}
-
-	constructor(output: string[] = []) {
-		this.commandOutput = output
-		this.shellIntegration = {
-			executeCommand: (command: string) => ({
-				read: async function* () {
-					for (const line of output) {
-						yield line + "\n"
-					}
-				},
-			}),
-		}
-	}
-
-	sendText(text: string, addNewLine = true): void {}
-}
+import { MockTerminal } from "./test/mocks"
 
 describe("TerminalProcess", () => {
 	describe("Output Processing", () => {
@@ -49,7 +25,7 @@ describe("TerminalProcess", () => {
 				emittedLines.push(line)
 			})
 
-			await process.run(terminal as any, "npm install")
+			await process.run(terminal, "npm install")
 
 			// Should only emit first and last progress lines
 			assert.deepStrictEqual(emittedLines, [
@@ -76,7 +52,7 @@ describe("TerminalProcess", () => {
 				emittedLines.push(line)
 			})
 
-			await process.run(terminal as any, "npm run build")
+			await process.run(terminal, "npm run build")
 
 			// Should preserve the error message
 			assert.ok(emittedLines.includes("Error: Failed to compile"))
@@ -98,7 +74,7 @@ describe("TerminalProcess", () => {
 				emittedLines.push(line)
 			})
 
-			await process.run(terminal as any, "some-long-running-command")
+			await process.run(terminal, "some-long-running-command")
 
 			assert.ok(sawTruncationMessage, "Should emit truncation message")
 			assert.ok(emittedLines.length < largeOutput.length, "Output should be truncated")
@@ -114,7 +90,7 @@ describe("TerminalProcess", () => {
 				emittedLines.push(line)
 			})
 
-			await process.run(terminal as any, "echo test")
+			await process.run(terminal, "echo test")
 
 			// Should strip shell integration sequences
 			assert.ok(!emittedLines.some((line) => line.includes("]633")))
@@ -132,13 +108,13 @@ describe("TerminalProcess", () => {
 				emittedLines.push(line)
 			})
 
-			await process.run(terminal as any, "echo test")
+			await process.run(terminal, "echo test")
 			process.continue()
 
 			// Run another command - should not see effects of previous output
 			const terminal2 = new MockTerminal(["Another line"])
 
-			await process.run(terminal2 as any, "echo test2")
+			await process.run(terminal2, "echo test2")
 
 			// The second command's output should be processed independently
 			assert.ok(!emittedLines.includes("Another line"), "Should not emit lines after continue")
@@ -154,7 +130,7 @@ describe("TerminalProcess", () => {
 				emittedLines.push(line)
 			})
 
-			await process.run(terminal as any, "long-process")
+			await process.run(terminal, "long-process")
 
 			assert.strictEqual(emittedLines[0], "", "First line should be empty for spinner")
 		})
