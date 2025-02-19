@@ -2,7 +2,6 @@ import * as assert from "assert"
 import { describe, it } from "mocha"
 import { TerminalProcess } from "../TerminalProcess"
 import { OutputProcessor } from "./OutputProcessor"
-import { CircularBuffer } from "./CircularBuffer"
 
 describe("Terminal Output Processing Integration", () => {
 	it("handles a realistic npm install scenario", async () => {
@@ -50,14 +49,6 @@ describe("Terminal Output Processing Integration", () => {
 		assert.ok(emittedLines.includes("warn deprecated package@1.0.0"))
 		assert.ok(emittedLines.includes("added 150 packages in 5s"))
 		assert.ok(emittedLines.includes("Done!"))
-
-		// Verify deduplication of progress bars
-		const progressLines = emittedLines.filter((line) => line.includes("Building"))
-		assert.ok(progressLines.length < 10, "Should deduplicate progress lines")
-
-		// Verify warning preservation
-		const warningLines = emittedLines.filter((line) => line.includes("warn"))
-		assert.strictEqual(warningLines.length, 1, "Should preserve warning messages")
 	})
 
 	it("handles a webpack build with errors scenario", async () => {
@@ -103,12 +94,6 @@ describe("Terminal Output Processing Integration", () => {
 		// Verify error preservation
 		assert.ok(emittedLines.includes("ERROR in ./src/index.js"))
 		assert.ok(emittedLines.includes("Module not found: Error: Can't resolve './missing'"))
-
-		// Verify spinner deduplication
-		const spinnerLines = emittedLines.filter((line) => /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(line))
-		assert.ok(spinnerLines.length < 5, "Should deduplicate spinner lines")
-
-		// Verify final output preservation
 		assert.ok(emittedLines.includes("webpack 5.0.0 compiled with 1 error"))
 	})
 
@@ -162,11 +147,5 @@ describe("Terminal Output Processing Integration", () => {
 		// Verify start and end preservation
 		assert.ok(emittedLines.includes("Cloning into 'large-repo'..."))
 		assert.ok(emittedLines.includes("Successfully cloned large-repo"))
-
-		// Verify progress deduplication
-		const progressLines = emittedLines.filter(
-			(line) => line.includes("Receiving objects") || line.includes("Resolving deltas"),
-		)
-		assert.ok(progressLines.length < 100, "Should significantly reduce progress lines")
 	})
 })

@@ -1,239 +1,105 @@
-import { CircularBuffer } from "./CircularBuffer"
+import { stripAnsi } from "../../../utils/ansi"
 
 export interface OutputProcessorConfig {
-	// Deduplication settings
-	similarityThreshold: number // 0.0 to 1.0, higher means more strict matching
-	recentLinesSize: number // Number of recent lines to keep for pattern matching
-
-	// Truncation settings
-	maxBufferSize: number // Maximum total size in bytes
-	keepFirstLines: number // Number of lines to keep from start
-	keepLastLines: number // Number of lines to keep from end
-
-	// Pattern matching
-	knownPatterns: {
-		[key: string]: RegExp
-	}
+	maxBufferSize: number
+	keepFirstChars: number
+	keepLastChars: number
 }
 
 export interface ProcessedLine {
-	skip: boolean // Whether to skip this line (e.g., if it's a duplicate)
-	line?: string // The processed line (if not skipped)
-	truncated?: boolean // Whether truncation was applied
+	skip: boolean
+	line?: string
+	truncated?: boolean
 }
 
 export const DEFAULT_CONFIG: OutputProcessorConfig = {
-	similarityThreshold: 0.9,
-	recentLinesSize: 100,
 	maxBufferSize: 1024 * 1024, // 1MB
-	keepFirstLines: 100,
-	keepLastLines: 50,
-	knownPatterns: {
-		npm: /\[.*\] ⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏/,
-		webpack: /\[\d+%\]/,
-		progress: /^progress/i,
-		spinner: /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/,
-	},
+	keepFirstChars: 10000, // First 10KB
+	keepLastChars: 10000, // Last 10KB
 }
 
 export class OutputProcessor {
-	private recentLines: CircularBuffer
-	private patternCache: Map<string, boolean>
-	private config: OutputProcessorConfig
+	private buffer: string = ""
 	private totalSize: number = 0
-	private allLines: string[] = []
-	private importantLines: Set<number> = new Set() // Line numbers containing errors/warnings
+	private wasTruncated: boolean = false
+	private config: OutputProcessorConfig
 
 	constructor(config: Partial<OutputProcessorConfig> = {}) {
 		this.config = { ...DEFAULT_CONFIG, ...config }
-		this.recentLines = new CircularBuffer(this.config.recentLinesSize)
-		this.patternCache = new Map()
 	}
 
-	/**
-	 * Process a new line of output
-	 */
 	processLine(line: string): ProcessedLine {
+		// Strip ANSI escape codes first
+		const cleanLine = stripAnsi(line)
+
 		// Always preserve error/warning messages
-		if (this.isImportantLine(line)) {
-			this.importantLines.add(this.allLines.length)
-			this.allLines.push(line)
-			this.totalSize += line.length
-			return { skip: false, line }
+		if (this.isImportantLine(cleanLine)) {
+			this.addToBuffer(cleanLine + "\n")
+			return { skip: false, line: cleanLine }
 		}
 
-		// Check for known patterns (progress bars, spinners, etc)
-		if (this.isKnownPattern(line)) {
-			return { skip: true }
-		}
+		// Add to buffer
+		this.addToBuffer(cleanLine + "\n")
 
-		// Check for near-duplicate lines
-		if (this.shouldDeduplicate(line)) {
-			return { skip: true }
-		}
-
-		// Add to buffer and check size
-		this.allLines.push(line)
-		this.totalSize += line.length
-		this.recentLines.add(line)
-
-		// Check if we need to truncate
+		// Check for truncation
 		if (this.shouldTruncate()) {
-			return this.truncateBuffer()
-		}
-
-		return { skip: false, line }
-	}
-
-	/**
-	 * Check if a line matches any known patterns (e.g., progress bars)
-	 */
-	private isKnownPattern(line: string): boolean {
-		const cacheKey = `pattern:${line}`
-		if (this.patternCache.has(cacheKey)) {
-			return this.patternCache.get(cacheKey)!
-		}
-
-		const result = Object.values(this.config.knownPatterns).some((pattern) => pattern.test(line))
-		this.patternCache.set(cacheKey, result)
-		return result
-	}
-
-	/**
-	 * Check if a line should be deduplicated based on similarity to recent lines
-	 */
-	private shouldDeduplicate(line: string): boolean {
-		const cacheKey = `dedup:${line}`
-		if (this.patternCache.has(cacheKey)) {
-			return this.patternCache.get(cacheKey)!
-		}
-
-		const recentLines = this.recentLines.getRecent(10) // Check last 10 lines
-		const isDuplicate = recentLines.some(
-			(recentLine) => this.calculateSimilarity(line, recentLine) >= this.config.similarityThreshold,
-		)
-
-		this.patternCache.set(cacheKey, isDuplicate)
-		return isDuplicate
-	}
-
-	/**
-	 * Calculate similarity between two strings (0.0 to 1.0)
-	 */
-	private calculateSimilarity(a: string, b: string): number {
-		if (a === b) {
-			return 1.0
-		}
-		if (!a || !b) {
-			return 0.0
-		}
-
-		// Use Levenshtein distance for similarity
-		const distance = this.levenshteinDistance(a, b)
-		const maxLength = Math.max(a.length, b.length)
-		return 1 - distance / maxLength
-	}
-
-	/**
-	 * Calculate Levenshtein distance between two strings
-	 */
-	private levenshteinDistance(a: string, b: string): number {
-		const matrix: number[][] = []
-
-		for (let i = 0; i <= b.length; i++) {
-			matrix[i] = [i]
-		}
-
-		for (let j = 0; j <= a.length; j++) {
-			matrix[0][j] = j
-		}
-
-		for (let i = 1; i <= b.length; i++) {
-			for (let j = 1; j <= a.length; j++) {
-				if (b.charAt(i - 1) === a.charAt(j - 1)) {
-					matrix[i][j] = matrix[i - 1][j - 1]
-				} else {
-					matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1)
-				}
+			this.truncateBuffer()
+			return {
+				skip: false,
+				line: cleanLine,
+				truncated: !this.wasTruncated, // Only set truncated=true the first time
 			}
 		}
 
-		return matrix[b.length][a.length]
+		return { skip: false, line: cleanLine }
 	}
 
-	/**
-	 * Check if the buffer needs truncation
-	 */
+	private addToBuffer(text: string): void {
+		this.buffer += text
+		this.totalSize += text.length
+	}
+
 	private shouldTruncate(): boolean {
 		return this.totalSize > this.config.maxBufferSize
 	}
 
-	/**
-	 * Truncate the buffer while preserving important lines
-	 */
-	private truncateBuffer(): ProcessedLine {
-		const { keepFirstLines, keepLastLines } = this.config
-		const totalLines = this.allLines.length
+	private truncateBuffer(): void {
+		const { keepFirstChars, keepLastChars } = this.config
 
-		// If we have fewer lines than we want to keep, no truncation needed
-		if (totalLines <= keepFirstLines + keepLastLines) {
-			return { skip: false, line: this.allLines[totalLines - 1] }
+		// If buffer is smaller than what we want to keep, no truncation needed
+		if (this.buffer.length <= keepFirstChars + keepLastChars) {
+			return
 		}
 
-		// Create new array with first N and last N lines
-		const newLines: string[] = []
+		// Keep first N and last N characters
+		const firstPart = this.buffer.slice(0, keepFirstChars)
+		const lastPart = this.buffer.slice(-keepLastChars)
 
-		// Add first N lines
-		for (let i = 0; i < keepFirstLines; i++) {
-			if (this.importantLines.has(i)) {
-				newLines.push(this.allLines[i])
-			}
-		}
-
-		// Add last N lines
-		const startLastN = Math.max(keepFirstLines, totalLines - keepLastLines)
-		for (let i = startLastN; i < totalLines; i++) {
-			if (this.importantLines.has(i)) {
-				newLines.push(this.allLines[i])
-			}
-		}
-
-		// Update state
-		this.allLines = newLines
-		this.totalSize = newLines.reduce((sum, line) => sum + line.length, 0)
-		this.importantLines.clear()
-
-		return {
-			skip: false,
-			line: this.allLines[this.allLines.length - 1],
-			truncated: true,
-		}
+		// Update buffer
+		this.buffer = firstPart + "\n[...output truncated...]\n" + lastPart
+		this.totalSize = this.buffer.length
+		this.wasTruncated = true
 	}
 
-	/**
-	 * Check if a line contains important information that should be preserved
-	 */
 	private isImportantLine(line: string): boolean {
-		const importantPatterns = [/error/i, /warning/i, /fail/i, /exception/i, /critical/i]
-
-		return importantPatterns.some((pattern) => pattern.test(line))
+		return /error|warning|fail|exception|critical/i.test(line)
 	}
 
-	/**
-	 * Get all processed lines
-	 */
-	getProcessedLines(): string[] {
-		return [...this.allLines]
+	getProcessedOutput(): string {
+		return this.buffer
 	}
 
-	/**
-	 * Clear the processor state
-	 */
+	getTotalSize(): number {
+		return this.totalSize
+	}
+
+	getConfig(): OutputProcessorConfig {
+		return { ...this.config }
+	}
+
 	clear(): void {
-		this.recentLines.clear()
-		this.patternCache.clear()
-		this.allLines = []
+		this.buffer = ""
 		this.totalSize = 0
-		this.importantLines.clear()
+		this.wasTruncated = false
 	}
 }

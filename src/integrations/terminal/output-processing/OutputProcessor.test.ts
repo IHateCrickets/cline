@@ -11,57 +11,6 @@ describe("OutputProcessor", () => {
 		assert.strictEqual(result.truncated, undefined)
 	})
 
-	describe("Pattern Matching", () => {
-		it("detects and skips npm progress patterns", () => {
-			const processor = new OutputProcessor()
-			const result = processor.processLine("[..................] ⠋ installing dependencies")
-			assert.strictEqual(result.skip, true)
-		})
-
-		it("detects and skips webpack progress patterns", () => {
-			const processor = new OutputProcessor()
-			const result = processor.processLine("[75%] Building...")
-			assert.strictEqual(result.skip, true)
-		})
-
-		it("detects and skips spinner patterns", () => {
-			const processor = new OutputProcessor()
-			const spinnerChars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-
-			spinnerChars.forEach((char) => {
-				const result = processor.processLine(`${char} Processing...`)
-				assert.strictEqual(result.skip, true)
-			})
-		})
-	})
-
-	describe("Deduplication", () => {
-		it("deduplicates identical lines", () => {
-			const processor = new OutputProcessor()
-			processor.processLine("duplicate line")
-			const result = processor.processLine("duplicate line")
-			assert.strictEqual(result.skip, true)
-		})
-
-		it("deduplicates similar lines based on threshold", () => {
-			const processor = new OutputProcessor({
-				similarityThreshold: 0.8,
-			})
-			processor.processLine("Processing item 123...")
-			const result = processor.processLine("Processing item 124...")
-			assert.strictEqual(result.skip, true)
-		})
-
-		it("keeps lines that are below similarity threshold", () => {
-			const processor = new OutputProcessor({
-				similarityThreshold: 0.9,
-			})
-			processor.processLine("Processing item 123...")
-			const result = processor.processLine("Different line entirely")
-			assert.strictEqual(result.skip, false)
-		})
-	})
-
 	describe("Important Line Preservation", () => {
 		it("always keeps error messages", () => {
 			const processor = new OutputProcessor()
@@ -77,11 +26,11 @@ describe("OutputProcessor", () => {
 			assert.strictEqual(result.line, "Warning: Deprecated feature used")
 		})
 
-		it("preserves error messages even during truncation", () => {
+		it("preserves error messages during truncation", () => {
 			const processor = new OutputProcessor({
 				maxBufferSize: 50, // Small size to force truncation
-				keepFirstLines: 2,
-				keepLastLines: 2,
+				keepFirstChars: 20,
+				keepLastChars: 20,
 			})
 
 			// Add some normal lines
@@ -90,9 +39,9 @@ describe("OutputProcessor", () => {
 			processor.processLine("Normal line 2")
 			processor.processLine("Normal line 3")
 
-			// Get all processed lines
-			const lines = processor.getProcessedLines()
-			assert.ok(lines.includes("Error: Important error"))
+			// Get processed output
+			const output = processor.getProcessedOutput()
+			assert.ok(output.includes("Error: Important error"))
 		})
 	})
 
@@ -100,8 +49,8 @@ describe("OutputProcessor", () => {
 		it("truncates when buffer size is exceeded", () => {
 			const processor = new OutputProcessor({
 				maxBufferSize: 50, // Small size to force truncation
-				keepFirstLines: 2,
-				keepLastLines: 2,
+				keepFirstChars: 20,
+				keepLastChars: 20,
 			})
 
 			// Add lines until truncation is needed
@@ -109,15 +58,16 @@ describe("OutputProcessor", () => {
 				processor.processLine(`Line ${i}`)
 			}
 
-			const lines = processor.getProcessedLines()
-			assert.ok(lines.length <= 4) // 2 first + 2 last lines
+			const output = processor.getProcessedOutput()
+			assert.ok(output.includes("[...output truncated...]"))
+			assert.ok(output.length <= 50 + 100) // Allow some extra for truncation message
 		})
 
 		it("indicates truncation in result", () => {
 			const processor = new OutputProcessor({
 				maxBufferSize: 50,
-				keepFirstLines: 2,
-				keepLastLines: 2,
+				keepFirstChars: 20,
+				keepLastChars: 20,
 			})
 
 			// Add lines until truncation is needed
@@ -128,20 +78,39 @@ describe("OutputProcessor", () => {
 
 			assert.strictEqual(result?.truncated, true)
 		})
+
+		it("only indicates truncation once", () => {
+			const processor = new OutputProcessor({
+				maxBufferSize: 50,
+				keepFirstChars: 20,
+				keepLastChars: 20,
+			})
+
+			let truncationCount = 0
+			for (let i = 0; i < 20; i++) {
+				const result = processor.processLine(`Line ${i}`)
+				if (result.truncated) {
+					truncationCount++
+				}
+			}
+
+			assert.strictEqual(truncationCount, 1, "Should only indicate truncation once")
+		})
 	})
 
 	describe("Configuration", () => {
 		it("uses default config when none provided", () => {
 			const processor = new OutputProcessor()
-			assert.deepStrictEqual(processor["config"], DEFAULT_CONFIG)
+			assert.deepStrictEqual(processor.getConfig(), DEFAULT_CONFIG)
 		})
 
 		it("merges partial config with defaults", () => {
 			const processor = new OutputProcessor({
-				similarityThreshold: 0.95,
+				maxBufferSize: 500,
 			})
-			assert.strictEqual(processor["config"].similarityThreshold, 0.95)
-			assert.strictEqual(processor["config"].recentLinesSize, DEFAULT_CONFIG.recentLinesSize)
+			const config = processor.getConfig()
+			assert.strictEqual(config.maxBufferSize, 500)
+			assert.strictEqual(config.keepFirstChars, DEFAULT_CONFIG.keepFirstChars)
 		})
 	})
 
@@ -158,9 +127,8 @@ describe("OutputProcessor", () => {
 			processor.clear()
 
 			// Verify state is cleared
-			assert.deepStrictEqual(processor.getProcessedLines(), [])
-			assert.strictEqual(processor["totalSize"], 0)
-			assert.strictEqual(processor["importantLines"].size, 0)
+			assert.strictEqual(processor.getProcessedOutput(), "")
+			assert.strictEqual(processor.getTotalSize(), 0)
 		})
 	})
 
