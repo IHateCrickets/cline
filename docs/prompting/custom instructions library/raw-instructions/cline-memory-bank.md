@@ -121,7 +121,7 @@ flowchart TD
     Execute --> Journal[Update Journal]
     Journal --> Count{API Call Count}
     Count -->|< 15-20 calls| Document[Document Changes]
-    Count -->|> 15-20 calls| Validate{Validate Progress}
+    Count -->|>= 15-20 calls| Validate[Validate Progress]
     Validate -->|On Track| Document
     Validate -->|Off Track| Reassess[Switch to Architect Mode]
 ```
