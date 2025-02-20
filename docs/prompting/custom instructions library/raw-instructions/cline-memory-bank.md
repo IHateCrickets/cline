@@ -117,12 +117,13 @@ flowchart TD
     Start[Start] --> Context[Check Memory Bank]
     Context --> Update[Update Documentation]
     Update --> Rules[Update .clinerules if needed]
-    Rules --> Execute[Execute Task]
+    Rules --> Reset[Reset API Count]
+    Reset --> Execute[Execute Task]
     Execute --> Journal[Update Journal]
     Journal --> Count{API Call Count}
-    Count -->|< 15-20 calls| Document[Document Changes]
+    Count -->|< 15-20 calls| Execute[Execute Task]
     Count -->|Validation Due| Validate[Validate Progress]
-    Validate -->|On Track| Journal
+    Validate -->|On Track| Reset[Reset API Count]
     Validate -->|Off Track| Reassess[Switch to Architect Mode]
 ```
 
